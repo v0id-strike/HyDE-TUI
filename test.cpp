@@ -57,13 +57,54 @@ void draw_centered_text(int y, const std::string& text) {
     mvprintw(y, x, "%s", text.c_str());
 }
 
-void draw_divider(int y) {
-    attron(COLOR_PAIR(0));
-    mvaddch(y, 0, ACS_LTEE);
-    for (int i = 1; i < COLS - 1; i++) {
-        mvaddch(y, i, ACS_HLINE);
+void draw_centered_multiline(int start_y, const std::vector<std::string>& lines) {
+    // Find longest line for proper centering
+    size_t max_length = 0;
+    for (const auto& line : lines) {
+        if (line.length() > max_length) {
+            max_length = line.length();
+        }
     }
-    mvaddch(y, COLS - 1, ACS_RTEE);
+
+    // Draw each line centered
+    for (int i = 0; i < lines.size(); i++) {
+        int x = (COLS - max_length) / 2;
+        mvprintw(start_y + i, x, "%s", lines[i].c_str());
+    }
+}
+void draw_logo(int y) {
+    std::vector<std::string> logo = {
+        "        .",
+        "       / \\         _       _  _      ___  ___",
+        "      /^  \\      _| |_    | || |_  _|   \\| __|",
+        "     /  _  \\    |_   _|   | __ | || | |) | _|",
+        "    /  | | ~\\     |_|     |_||_|\\_, |___/|___|",
+        "   /.-'   '-.\\                  |__/"
+    };
+
+    draw_centered_multiline(y, logo);
+}
+
+void draw_divider(int start_pos, int end_pos, bool is_vertical) {
+    attron(COLOR_PAIR(0));
+    
+    if (is_vertical) {
+        // Vertical divider from start_pos to end_pos (y coordinates)
+        for (int y = start_pos; y <= end_pos; y++) {
+            chtype ch = (y == start_pos) ? ACS_TTEE : 
+                       (y == end_pos) ? ACS_BTEE : 
+                       ACS_VLINE;
+            mvaddch(y, (start_pos + end_pos)/2, ch); // Center x position
+        }
+    } else {
+        // Horizontal divider from start_pos to end_pos (x coordinates)
+        for (int x = start_pos; x <= end_pos; x++) {
+            chtype ch = (x == start_pos) ? ACS_LTEE : 
+                        (x == end_pos) ? ACS_RTEE : 
+                        ACS_HLINE;
+            mvaddch((start_pos + end_pos)/2, x, ch); // Center y position
+        }
+    }
     attroff(COLOR_PAIR(0));
 }
 
@@ -100,39 +141,40 @@ int main() {
     draw_box(max_y, max_x, 0, 0);
   
     // ASCII Art section
-    attron(COLOR_PAIR(2));
-    draw_centered_text(3, "ASCII");
-    attroff(COLOR_PAIR(2));
+    // Usage example:
+    draw_logo(1);  // Draws logo starting at row 3
     
     // First divider
-    draw_divider(5);
+    draw_divider(0, max_x, 8, false);
+
+    // Second divider
+    draw_divider(0, max_x, max_y - 20, false);
     
+    draw_divider(max_y, max_x / 2, max_y - 20, true);
+
     // Options section (middle)
     std::vector<std::string> options = {"1) Age", "2) Name", "3) Country"};
     int selected = 0;
     
     // Info/log section
     std::string info_text = "Use arrow keys to navigate, ENTER to select";
-    mvprintw(7, (max_x - info_text.length()) / 2, "%s", info_text.c_str());
+    mvprintw(max_y - 18, (max_x - info_text.length()) / 2, "%s", info_text.c_str());
     
     // User input storage
     std::string age, name, country;
-    
-    while (true) {
+ 
+    while (true) {       
         // Draw options
         for (int i = 0; i < options.size(); i++) {
             if (i == selected) {
                 attron(A_REVERSE);
             }
-            mvprintw(10 + i, (max_x - options[i].length()) / 2, "%s", options[i].c_str());
+            mvprintw((max_y - 16) + i, (max_x - 5) / 2, "%s", options[i].c_str());
             if (i == selected) {
                 attroff(A_REVERSE);
             }
         }
-        
-        // Second divider
-        draw_divider(max_y - 10);
-        
+                
         // Display collected info - with transparent background
         attron(COLOR_PAIR(3));
         if (!age.empty()) {
