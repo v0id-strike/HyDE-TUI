@@ -1,239 +1,252 @@
 #include <ncurses.h>
 #include <string>
 #include <vector>
-#include <cstring> // for strstr
-#include <iostream>
+#include <memory>
 #include <dlfcn.h>
+#include <iostream>
 #include <cstdlib>
 
-void install_ncurses() {
-    std::cout << "Attempting to install ncurses...\n";
-    if (system("sudo pacman -S --noconfirm ncurses") != 0) {
-        std::cerr << "Installation failed. Please run:\n";
-        std::cerr << "  sudo pacman -S ncurses\n";
-        exit(1);
-    }
-}
+// Constants for UI layout
+constexpr int HEADER_HEIGHT = 9;
+constexpr int MAIN_PANEL_OFFSET = 20;
+constexpr int LEFT_PANEL_WIDTH_DIVIDER = 2;
 
-void setup_transparent_background() {
-    // Try to use default terminal background
-    use_default_colors(); // Supported by many modern terminals
-    
-    // Initialize color pairs with transparent background (-1)
-    init_pair(1, COLOR_CYAN, -1);
-    init_pair(2, COLOR_YELLOW, -1);
-    init_pair(3, COLOR_GREEN, -1);
-    
-    // Fallback for terminals that don't support default colors
-    if (!has_colors() || !can_change_color()) {
-        init_pair(1, COLOR_CYAN, COLOR_BLACK);
-        init_pair(2, COLOR_YELLOW, COLOR_BLACK);
-        init_pair(3, COLOR_GREEN, COLOR_BLACK);
-    }
-}
+struct UserData {
+    int selected = 0;
+    std::vector<std::string> options;
+    std::string fresh_install;
+    std::string update;
+    std::string themes;
+};
 
-void draw_box(int height, int width, int starty, int startx) {
-    // Use ACS characters with default background
-    attron(COLOR_PAIR(0));
-    mvaddch(starty, startx, ACS_ULCORNER);
-    mvaddch(starty, width - 1, ACS_URCORNER);
-    mvaddch(height - 1, startx, ACS_LLCORNER);
-    mvaddch(height - 1, width - 1, ACS_LRCORNER);
-    
-    for (int i = startx + 1; i < width - 1; i++) {
-        mvaddch(starty, i, ACS_HLINE);
-        mvaddch(height - 1, i, ACS_HLINE);
+struct Alerts {
+    std::string info_text;
+};
+
+// Custom deleter to avoid noexcept warning
+struct DlCloser {
+    void operator()(void* handle) const noexcept {
+        if (handle) dlclose(handle);
+    }
+};
+
+class NcursesManager {
+public:
+    NcursesManager() {
+        check_ncurses();
+        init_ncurses();
     }
     
-    for (int i = starty + 1; i < height - 1; i++) {
-        mvaddch(i, startx, ACS_VLINE);
-        mvaddch(i, width - 1, ACS_VLINE);
+    ~NcursesManager() {
+        endwin();
     }
-    attroff(COLOR_PAIR(0));
-}
 
-void draw_centered_text(int y, const std::string& text) {
-    int x = (COLS - text.length()) / 2;
-    mvprintw(y, x, "%s", text.c_str());
-}
-
-void draw_centered_multiline(int start_y, const std::vector<std::string>& lines) {
-    // Find longest line for proper centering
-    size_t max_length = 0;
-    for (const auto& line : lines) {
-        if (line.length() > max_length) {
-            max_length = line.length();
+private:
+    void check_ncurses() {
+        std::unique_ptr<void, DlCloser> handle(
+            dlopen("libncurses++w.so", RTLD_LAZY)
+        );
+        
+        if (!handle) {
+            std::cout << "NCurses not found. Install? [y/N] ";
+            char answer;
+            std::cin >> answer;
+            
+            if (tolower(answer) == 'y') {
+                install_ncurses();
+            } else {
+                exit(EXIT_FAILURE);
+            }
         }
     }
 
-    // Draw each line centered
-    for (int i = 0; i < lines.size(); i++) {
-        int x = (COLS - max_length) / 2;
-        mvprintw(start_y + i, x, "%s", lines[i].c_str());
+    void install_ncurses() {
+        if (system("sudo pacman -S --noconfirm ncurses") != 0) {
+            std::cerr << "Installation failed. Please run:\n";
+            std::cerr << "  sudo pacman -S ncurses\n";
+            exit(EXIT_FAILURE);
+        }
     }
-}
-void draw_logo(int y) {
-    std::vector<std::string> logo = {
-        "        .",
-        "       / \\         _       _  _      ___  ___",
-        "      /^  \\      _| |_    | || |_  _|   \\| __|",
-        "     /  _  \\    |_   _|   | __ | || | |) | _|",
-        "    /  | | ~\\     |_|     |_||_|\\_, |___/|___|",
-        "   /.-'   '-.\\                  |__/"
+
+    void init_ncurses() {
+        initscr();
+        cbreak();
+        noecho();
+        keypad(stdscr, TRUE);
+        curs_set(0);
+        start_color();
+        setup_transparent_background();
+    }
+
+    void setup_transparent_background() {
+        use_default_colors();
+        init_pair(1, COLOR_CYAN, -1);    // For headers and titles
+        init_pair(2, COLOR_YELLOW, -1);  // For selected items
+        init_pair(3, COLOR_GREEN, -1);   // For success messages
+        init_pair(4, COLOR_RED, -1);     // For error messages
+        init_pair(5, COLOR_WHITE, -1);   // For normal text
+        
+        if (!has_colors() || !can_change_color()) {
+            init_pair(1, COLOR_CYAN, COLOR_BLACK);
+            init_pair(2, COLOR_YELLOW, COLOR_BLACK);
+            init_pair(3, COLOR_GREEN, COLOR_BLACK);
+            init_pair(4, COLOR_RED, COLOR_BLACK);
+            init_pair(5, COLOR_WHITE, COLOR_BLACK);
+        }
+    }
+};
+
+class TUI {
+public:
+    void draw_box(int endy, int endx, int starty = 0, int startx = 0) {
+        attron(COLOR_PAIR(0));
+        mvaddch(starty, startx, ACS_ULCORNER);
+        mvaddch(starty, endx - 1, ACS_URCORNER);
+        mvaddch(endy - 1, startx, ACS_LLCORNER);
+        mvaddch(endy - 1, endx - 1, ACS_LRCORNER);
+        
+        for (int i = startx + 1; i < endx - 1; i++) {
+            mvaddch(starty, i, ACS_HLINE);
+            mvaddch(endy - 1, i, ACS_HLINE);
+        }
+        
+        for (int i = starty + 1; i < endy - 1; i++) {
+            mvaddch(i, startx, ACS_VLINE);
+            mvaddch(i, endx - 1, ACS_VLINE);
+        }
+        attroff(COLOR_PAIR(0));
+    }
+
+    void layout(int max_y, int max_x) {
+        draw_box(HEADER_HEIGHT, max_x);
+        draw_box(max_y - MAIN_PANEL_OFFSET, max_x, HEADER_HEIGHT);
+        draw_box(max_y, max_x / LEFT_PANEL_WIDTH_DIVIDER, max_y - MAIN_PANEL_OFFSET);
+        draw_box(max_y, max_x, max_y - MAIN_PANEL_OFFSET, max_x / LEFT_PANEL_WIDTH_DIVIDER);
+    }
+
+    void draw_centered_multiline(int start_y, const std::vector<std::string>& lines) {
+        size_t max_length = 0;
+        for (const auto& line : lines) {
+            max_length = std::max(max_length, line.length());
+        }
+
+        for (size_t i = 0; i < lines.size(); ++i) {
+            mvprintw(start_y + i, (COLS - max_length) / 2, "%s", lines[i].c_str());
+        }
+    }
+
+    void draw_logo(int y) {
+        static const std::vector<std::string> logo = {
+            "        .",
+            "       / \\         _       _  _      ___  ___",
+            "      /^  \\      _| |_    | || |_  _|   \\| __|",
+            "     /  _  \\    |_   _|   | __ | || | |) | _|",
+            "    /  | | ~\\     |_|     |_||_|\\_, |___/|___|",
+            "   /.-'   '-.\\                  |__/"
+        };
+        attron(COLOR_PAIR(1));
+        draw_centered_multiline(y, logo);
+        attroff(COLOR_PAIR(1));
+    }
+};
+
+std::pair<UserData, Alerts> main_menu(int max_y, int max_x, UserData& data) {
+    Alerts alerts{
+        "Use arrow keys to navigate, ENTER to select, Q to quit"
     };
 
-    draw_centered_multiline(y, logo);
-}
-
-void draw_divider(int start_pos, int end_pos, bool is_vertical) {
-    attron(COLOR_PAIR(0));
+    attron(COLOR_PAIR(5));
+    mvprintw(max_y - 18, (max_x / 2 - alerts.info_text.length()) / 2, "%s", alerts.info_text.c_str());
     
-    if (is_vertical) {
-        // Vertical divider from start_pos to end_pos (y coordinates)
-        for (int y = start_pos; y <= end_pos; y++) {
-            chtype ch = (y == start_pos) ? ACS_TTEE : 
-                       (y == end_pos) ? ACS_BTEE : 
-                       ACS_VLINE;
-            mvaddch(y, (start_pos + end_pos)/2, ch); // Center x position
+    for (size_t i = 0; i < data.options.size(); ++i) {
+        if (i == data.selected) {
+            attron(COLOR_PAIR(2) | A_REVERSE);
+        } else {
+            attron(COLOR_PAIR(5));
         }
-    } else {
-        // Horizontal divider from start_pos to end_pos (x coordinates)
-        for (int x = start_pos; x <= end_pos; x++) {
-            chtype ch = (x == start_pos) ? ACS_LTEE : 
-                        (x == end_pos) ? ACS_RTEE : 
-                        ACS_HLINE;
-            mvaddch((start_pos + end_pos)/2, x, ch); // Center y position
-        }
+        mvprintw((max_y - 16) + i, (max_x / 2 - 15) / 2, "%s", data.options[i].c_str());
+        attroff(COLOR_PAIR(2) | A_REVERSE);
+        attroff(COLOR_PAIR(5));
     }
-    attroff(COLOR_PAIR(0));
+
+    int ch = getch();
+    switch (ch) {
+        case KEY_UP:
+            data.selected = (data.selected - 1 + data.options.size()) % data.options.size();
+            break;
+        case KEY_DOWN:
+            data.selected = (data.selected + 1) % data.options.size();
+            break;
+        case 10: { // ENTER
+            echo();
+            curs_set(1);
+            move(max_y - 2, 10);
+            clrtoeol();
+            
+            const char* prompts[] = {
+                "What is your fresh_install? ",
+                "What is your update? ",
+                "Where are you from? "
+            };
+            printw("%s", prompts[data.selected]);
+            
+            char input[256];
+            getnstr(input, sizeof(input) - 1);
+            
+            std::string* targets[] = {&data.fresh_install, &data.update, &data.themes};
+            *targets[data.selected] = input;
+            
+            noecho();
+            curs_set(0);
+            break;
+        }
+        case 'q':
+        case 'Q':
+            data.fresh_install = "QUIT";
+            break;
+    }
+
+    return {data, alerts};
 }
 
 int main() {
-
-    // Check if we can load ncurses
-    if (dlopen("libncurses++w.so", RTLD_LAZY) == nullptr) {
-        std::cout << "NCurses not found. Install? [y/N] ";
-        char answer;
-        std::cin >> answer;
-        
-        if (tolower(answer) == 'y') {
-            install_ncurses();
-        } else {
-            exit(1);
-        }
-    }
-
-    initscr();
-    cbreak();
-    noecho();
-    keypad(stdscr, TRUE);
-    curs_set(0);
+    NcursesManager ncurses;
+    TUI ui;
     
-    // Enable color with transparent background support
-    start_color();
-    setup_transparent_background();
-    
-    // Get screen dimensions
     int max_y, max_x;
     getmaxyx(stdscr, max_y, max_x);
-    
-    // Draw the main box (will use default background)
-    draw_box(max_y, max_x, 0, 0);
-  
-    // ASCII Art section
-    // Usage example:
-    draw_logo(1);  // Draws logo starting at row 3
-    
-    // First divider
-    draw_divider(0, max_x, 8, false);
 
-    // Second divider
-    draw_divider(0, max_x, max_y - 20, false);
-    
-    draw_divider(max_y, max_x / 2, max_y - 20, true);
+    UserData data{
+        0,
+        {"1) fresh_install", "2) update", "3) themes"},
+        "", "", ""
+    };
 
-    // Options section (middle)
-    std::vector<std::string> options = {"1) Age", "2) Name", "3) Country"};
-    int selected = 0;
-    
-    // Info/log section
-    std::string info_text = "Use arrow keys to navigate, ENTER to select";
-    mvprintw(max_y - 18, (max_x - info_text.length()) / 2, "%s", info_text.c_str());
-    
-    // User input storage
-    std::string age, name, country;
- 
-    while (true) {       
-        // Draw options
-        for (int i = 0; i < options.size(); i++) {
-            if (i == selected) {
-                attron(A_REVERSE);
-            }
-            mvprintw((max_y - 16) + i, (max_x - 5) / 2, "%s", options[i].c_str());
-            if (i == selected) {
-                attroff(A_REVERSE);
-            }
-        }
-                
-        // Display collected info - with transparent background
-        attron(COLOR_PAIR(3));
-        if (!age.empty()) {
-            mvprintw(max_y - 8, 10, "Age: %s", age.c_str());
-        }
-        if (!name.empty()) {
-            mvprintw(max_y - 7, 10, "Name: %s", name.c_str());
-        }
-        if (!country.empty()) {
-            mvprintw(max_y - 6, 10, "Country: %s", country.c_str());
-        }
-        attroff(COLOR_PAIR(3));
+    while (true) {
+        ui.layout(max_y, max_x);
+        ui.draw_logo(1);
         
-        // User input section
-        mvprintw(max_y - 3, 10, "Press Q to quit");
+        auto [updated_data, alerts] = main_menu(max_y, max_x, data);
+        data = updated_data;
         
-        int ch = getch();
-        switch (ch) {
-            case KEY_UP:
-                selected = (selected - 1 + options.size()) % options.size();
-                break;
-            case KEY_DOWN:
-                selected = (selected + 1) % options.size();
-                break;
-            case 10: // ENTER
-                {
-                    echo();
-                    curs_set(1);
-                    move(max_y - 2, 10);
-                    clrtoeol();
-                    
-                    std::string prompt;
-                    switch (selected) {
-                        case 0: prompt = "What is your age? "; break;
-                        case 1: prompt = "What is your name? "; break;
-                        case 2: prompt = "Where are you from? "; break;
-                    }
-                    
-                    printw("%s", prompt.c_str());
-                    char input[256];
-                    getstr(input);
-                    
-                    switch (selected) {
-                        case 0: age = input; break;
-                        case 1: name = input; break;
-                        case 2: country = input; break;
-                    }
-                    
-                    noecho();
-                    curs_set(0);
-                }
-                break;
-            case 'q':
-            case 'Q':
-                endwin();
-                return 0;
+        if (data.fresh_install == "QUIT") break;
+        
+        if (!data.fresh_install.empty()) {
+            attron(COLOR_PAIR(3));
+            mvprintw(max_y - 8, 10, "fresh_install: %s", data.fresh_install.c_str());
+            attroff(COLOR_PAIR(3));
+        }
+        if (!data.update.empty()) {
+            attron(COLOR_PAIR(3));
+            mvprintw(max_y - 7, 10, "update: %s", data.update.c_str());
+            attroff(COLOR_PAIR(3));
+        }
+        if (!data.themes.empty()) {
+            attron(COLOR_PAIR(3));
+            mvprintw(max_y - 6, 10, "themes: %s", data.themes.c_str());
+            attroff(COLOR_PAIR(3));
         }
     }
-    
-    endwin();
-    return 0;
+
+    return EXIT_SUCCESS;
 }
