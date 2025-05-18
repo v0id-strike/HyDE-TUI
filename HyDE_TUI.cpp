@@ -243,7 +243,7 @@ std::pair<UserData, Alerts> main_menu(int max_y, int max_x, UserData& data) {
     std::string username = pw ? pw->pw_name : "User";
 
     Alerts alerts{
-        "<Q> : quit  ||  <Arrow-Keys> : navigate || <Space> : multiselect || <Enter> : continue",
+        "<Q> : quit  ||  <Arrow-Keys> : navigate || <TAB> : multiselect || <Enter> : continue",
         ""  // Initialize warning_text with empty string
     };
 
