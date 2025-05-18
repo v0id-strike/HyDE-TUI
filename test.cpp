@@ -5,11 +5,9 @@
 #include <dlfcn.h>
 #include <iostream>
 #include <cstdlib>
-
-// Constants for UI layout
-constexpr int HEADER_HEIGHT = 9;
-constexpr int MAIN_PANEL_OFFSET = 20;
-constexpr int LEFT_PANEL_WIDTH_DIVIDER = 2;
+#include <pwd.h>
+#include <unistd.h>
+#include <sys/stat.h>  // For chmod and S_IRWXU
 
 struct UserData {
     int selected = 0;
@@ -17,10 +15,13 @@ struct UserData {
     std::string fresh_install;
     std::string update;
     std::string themes;
+    std::vector<std::string> logs;        // For storing script output
+    std::string system_info;              // For storing system information
 };
 
 struct Alerts {
     std::string info_text;
+    std::string warning_text;
 };
 
 // Custom deleter to avoid noexcept warning
@@ -118,10 +119,11 @@ public:
     }
 
     void layout(int max_y, int max_x) {
-        draw_box(HEADER_HEIGHT, max_x);
-        draw_box(max_y - MAIN_PANEL_OFFSET, max_x, HEADER_HEIGHT);
-        draw_box(max_y, max_x / LEFT_PANEL_WIDTH_DIVIDER, max_y - MAIN_PANEL_OFFSET);
-        draw_box(max_y, max_x, max_y - MAIN_PANEL_OFFSET, max_x / LEFT_PANEL_WIDTH_DIVIDER);
+        draw_box(9, max_x);
+        draw_box(max_y - 20, max_x, 9);
+        draw_box(max_y - 3, max_x / 2, max_y - 20);
+        draw_box(max_y - 3, max_x, max_y - 20, max_x / 2);
+        draw_box(max_y, max_x, max_y -3);
     }
 
     void draw_centered_multiline(int start_y, const std::vector<std::string>& lines) {
@@ -150,14 +152,95 @@ public:
     }
 };
 
+void update_logs(const std::vector<std::string>& logs, int max_y, int max_x) {
+    int start_y = 10;  // Start after the ASCII art box
+    int max_lines = max_y - 20 - start_y - 2;  // Available space for logs
+    
+    // Keep only the last max_lines entries
+    size_t start_idx = (logs.size() > max_lines) ? logs.size() - max_lines : 0;
+    
+    for (size_t i = 0; i < std::min(logs.size() - start_idx, static_cast<size_t>(max_lines)); ++i) {
+        const std::string& line = logs[start_idx + i];
+        
+        // Check if the line contains error indicators
+        bool is_error = line.find("error") != std::string::npos ||
+                       line.find("Error") != std::string::npos ||
+                       line.find("ERROR") != std::string::npos ||
+                       line.find("No such file") != std::string::npos ||
+                       line.find("failed") != std::string::npos;
+        
+        if (is_error) {
+            attron(COLOR_PAIR(4));  // Red color for errors
+        } else {
+            attron(COLOR_PAIR(5));  // White color for normal text
+        }
+        
+        mvprintw(start_y + i, 2, "%s", line.c_str());
+        
+        if (is_error) {
+            attroff(COLOR_PAIR(4));
+        } else {
+            attroff(COLOR_PAIR(5));
+        }
+    }
+}
+
+void update_system_info(const std::string& info, int max_y, int max_x) {
+    // Implementation of update_system_info function
+}
+
+void execute_script(const std::string& script_name, UserData& data) {
+    // Add debug message
+    data.logs.push_back("Attempting to execute: " + script_name);
+    
+    // Check if script exists
+    if (access(script_name.c_str(), F_OK) == -1) {
+        data.logs.push_back("Error: Script not found: " + script_name);
+        return;
+    }
+    
+    // Make sure script is executable
+    chmod(script_name.c_str(), S_IRWXU);
+    
+    // Execute script and capture both stdout and stderr
+    std::string command = "bash " + script_name + " 2>&1";
+    FILE* pipe = popen(command.c_str(), "r");
+    if (!pipe) {
+        data.logs.push_back("Error: Failed to execute " + script_name);
+        return;
+    }
+
+    char buffer[256];
+    while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+        std::string line = buffer;
+        // Remove trailing newline
+        if (!line.empty() && line[line.length()-1] == '\n') {
+            line.erase(line.length()-1);
+        }
+        data.logs.push_back(line);
+    }
+    
+    int status = pclose(pipe);
+    if (status != 0) {
+        data.logs.push_back("Script exited with status: " + std::to_string(status));
+    }
+}
+
 std::pair<UserData, Alerts> main_menu(int max_y, int max_x, UserData& data) {
+    // Get current username
+    struct passwd *pw = getpwuid(getuid());
+    std::string username = pw ? pw->pw_name : "User";
+
     Alerts alerts{
-        "Use arrow keys to navigate, ENTER to select, Q to quit"
+        "<Q> : quit  ||  <Arrow-Keys> : navigate || <Space> : multiselect || <Enter> : continue"
     };
 
     attron(COLOR_PAIR(5));
+    mvprintw(max_y - 2, (max_x - alerts.info_text.length()) / 2, "%s", alerts.info_text.c_str());
+
+    alerts.info_text = "Welcome, " + username;
     mvprintw(max_y - 18, (max_x / 2 - alerts.info_text.length()) / 2, "%s", alerts.info_text.c_str());
-    
+
     for (size_t i = 0; i < data.options.size(); ++i) {
         if (i == data.selected) {
             attron(COLOR_PAIR(2) | A_REVERSE);
@@ -172,32 +255,30 @@ std::pair<UserData, Alerts> main_menu(int max_y, int max_x, UserData& data) {
     int ch = getch();
     switch (ch) {
         case KEY_UP:
+        case KEY_LEFT:
             data.selected = (data.selected - 1 + data.options.size()) % data.options.size();
             break;
         case KEY_DOWN:
+        case KEY_RIGHT:
             data.selected = (data.selected + 1) % data.options.size();
             break;
         case 10: { // ENTER
-            echo();
-            curs_set(1);
-            move(max_y - 2, 10);
-            clrtoeol();
-            
-            const char* prompts[] = {
-                "What is your fresh_install? ",
-                "What is your update? ",
-                "Where are you from? "
-            };
-            printw("%s", prompts[data.selected]);
-            
-            char input[256];
-            getnstr(input, sizeof(input) - 1);
-            
-            std::string* targets[] = {&data.fresh_install, &data.update, &data.themes};
-            *targets[data.selected] = input;
-            
-            noecho();
-            curs_set(0);
+            std::string script_name;
+            switch (data.selected) {
+                case 0: 
+                    script_name = "Scripts/fresh_install.sh";
+                    data.logs.push_back("Starting fresh installation...");
+                    break;
+                case 1: 
+                    script_name = "Scripts/update.sh";
+                    data.logs.push_back("Starting system update...");
+                    break;
+                case 2: 
+                    script_name = "Scripts/themepatcher.sh";
+                    data.logs.push_back("Starting theme patcher...");
+                    break;
+            }
+            execute_script(script_name, data);
             break;
         }
         case 'q':
@@ -218,16 +299,28 @@ int main() {
 
     UserData data{
         0,
-        {"1) fresh_install", "2) update", "3) themes"},
-        "", "", ""
+        {"1) Fresh Install", "2) Update", "3) Theme Patcher"},
+        "", "", "", {}, ""
     };
 
     while (true) {
+        clear();
         ui.layout(max_y, max_x);
         ui.draw_logo(1);
         
         auto [updated_data, alerts] = main_menu(max_y, max_x, data);
         data = updated_data;
+        
+        // Update all panels
+        update_logs(data.logs, max_y, max_x);
+        update_system_info(data.system_info, max_y, max_x);
+        
+        // Display help text
+        attron(COLOR_PAIR(5));
+        mvprintw(max_y - 2, (max_x - alerts.info_text.length()) / 2, "%s", alerts.info_text.c_str());
+        attroff(COLOR_PAIR(5));
+        
+        refresh();
         
         if (data.fresh_install == "QUIT") break;
         
