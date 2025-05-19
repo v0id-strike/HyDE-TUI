@@ -1,26 +1,47 @@
 CXX = g++
-CXXFLAGS = -std=c++17 -Wall -Wextra -pedantic
-LDFLAGS = -lncurses
+CXXFLAGS = -std=c++17 -Wall -Wextra -pedantic -fPIC
+LDFLAGS = -lncurses -ldl -ljsoncpp
+
+SCRIPT_DIR = Scripts
+OBJ_DIR = Build/obj
+LIB_DIR = Build/lib
 
 TARGET = hyde-tui
+
 SRCS = HyDE_TUI.cpp
-OBJS = $(SRCS:.cpp=.o)
+OBJS = $(patsubst %.cpp,$(OBJ_DIR)/%.o,$(SRCS))
 
-.PHONY: all clean
+SCRIPT_SRCS = $(SCRIPT_DIR)/system_patcher.cpp $(SCRIPT_DIR)/fresh_install.cpp
+SCRIPT_OBJS = $(patsubst $(SCRIPT_DIR)/%.cpp,$(OBJ_DIR)/%.o,$(SCRIPT_SRCS))
+SCRIPT_SOS = $(patsubst $(SCRIPT_DIR)/%.cpp,$(LIB_DIR)/%.so,$(SCRIPT_SRCS))
 
-all: $(TARGET)
+.PHONY: all clean install uninstall
+
+all: $(TARGET) $(SCRIPT_SOS)
 
 $(TARGET): $(OBJS)
-	$(CXX) $(OBJS) -o $(TARGET) $(LDFLAGS)
+	@mkdir -p $(dir $@)
+	$(CXX) $(OBJS) -o $@ $(LDFLAGS)
 
-%.o: %.cpp
+$(LIB_DIR)/%.so: $(OBJ_DIR)/%.o
+	@mkdir -p $(LIB_DIR)
+	$(CXX) -shared -o $@ $< $(LDFLAGS)
+
+$(OBJ_DIR)/%.o: %.cpp
+	@mkdir -p $(OBJ_DIR)
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+$(OBJ_DIR)/%.o: $(SCRIPT_DIR)/%.cpp
+	@mkdir -p $(OBJ_DIR)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 clean:
-	rm -f $(OBJS) $(TARGET)
+	rm -rf $(OBJ_DIR) $(LIB_DIR) $(TARGET)
 
-install: $(TARGET)
-	install -Dm755 $(TARGET) /usr/local/bin/$(TARGET)
+install: $(TARGET) $(SCRIPT_SOS)
+	install -Dm755 $(TARGET) ~/.local/bin/$(TARGET)
+	install -Dm755 $(SCRIPT_SOS) ~/.local/lib/hyde-tui/
 
 uninstall:
-	rm -f /usr/local/bin/$(TARGET) 
+	rm -f ~/.local/bin/$(TARGET)
+	rm -f ~/.local/lib/hyde-tui/*.so

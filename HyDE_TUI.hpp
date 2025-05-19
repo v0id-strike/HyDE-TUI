@@ -1,5 +1,4 @@
-#ifndef HYDE_TUI_HPP
-#define HYDE_TUI_HPP
+#pragma once
 
 #include <ncurses.h>
 #include <string>
@@ -14,6 +13,11 @@
 #include <thread>
 #include <chrono>
 #include <sstream>
+#include <functional>
+
+// Forward declarations
+class SystemPatcher;
+class SystemInstaller;
 
 // Struct declarations
 struct UserData {
@@ -24,6 +28,7 @@ struct UserData {
     std::string themes;
     std::vector<std::string> logs;        // For storing script output
     std::string system_info;              // For storing system information
+    std::string input_prompt;             // For storing user input prompts
 };
 
 struct Alerts {
@@ -61,5 +66,4 @@ void update_logs(const std::vector<std::string>& logs, int max_y, int max_x);
 void update_system_info(int max_y, int max_x);
 void execute_script(const std::string& script_name, UserData& data);
 std::pair<UserData, Alerts> main_menu(int max_y, int max_x, UserData& data);
-
-#endif // HYDE_TUI_HPP 
+// HYDE_TUI_HPP 

@@ -1,4 +1,10 @@
 #include "HyDE_TUI.hpp"
+#include <dlfcn.h>
+#include <thread>
+#include <chrono>
+#include <pwd.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 // Custom deleter implementation
 void DlCloser::operator()(void* handle) const noexcept {
@@ -237,6 +243,149 @@ void execute_script(const std::string& script_name, UserData& data) {
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
 }
 
+// Function declarations for fresh install
+typedef SystemPatcher* (*CreatePatcherFunc)();
+typedef void (*DestroyPatcherFunc)(SystemPatcher*);
+typedef bool (*InitializePatcherFunc)(SystemPatcher*, const char*);
+typedef char* (*GetPatcherLogsFunc)(SystemPatcher*);
+typedef void (*FreePatcherLogsFunc)(char*);
+typedef bool (*UpdateMirrorlistFunc)(SystemPatcher*);
+typedef bool (*CheckAurFunc)(SystemPatcher*);
+typedef bool (*InstallAurHelperFunc)(SystemPatcher*, const char*);
+
+typedef SystemInstaller* (*CreateInstallerFunc)();
+typedef void (*DestroyInstallerFunc)(SystemInstaller*);
+typedef bool (*RunInstallationFunc)(SystemInstaller*);
+typedef char* (*GetInstallerLogsFunc)(SystemInstaller*);
+typedef void (*FreeInstallerLogsFunc)(char*);
+
+void handle_fresh_install(UserData& data) {
+    // Load system_patcher library
+    void* patcher_handle = dlopen("./Build/lib/system_patcher.so", RTLD_LAZY);
+    if (!patcher_handle) {
+        data.logs.push_back("Error loading system_patcher: " + std::string(dlerror()));
+        return;
+    }
+
+    // Load fresh_install library
+    void* installer_handle = dlopen("./Build/lib/fresh_install.so", RTLD_LAZY);
+    if (!installer_handle) {
+        data.logs.push_back("Error loading fresh_install: " + std::string(dlerror()));
+        dlclose(patcher_handle);
+        return;
+    }
+
+    // Get function pointers for system_patcher
+    auto create_patcher = (CreatePatcherFunc)dlsym(patcher_handle, "create_patcher");
+    auto destroy_patcher = (DestroyPatcherFunc)dlsym(patcher_handle, "destroy_patcher");
+    auto initialize_patcher = (InitializePatcherFunc)dlsym(patcher_handle, "initialize_patcher");
+    auto get_patcher_logs = (GetPatcherLogsFunc)dlsym(patcher_handle, "get_patcher_logs");
+    auto free_patcher_logs = (FreePatcherLogsFunc)dlsym(patcher_handle, "free_patcher_logs");
+    auto update_mirrorlist = (UpdateMirrorlistFunc)dlsym(patcher_handle, "update_system_mirrorlist");
+    auto check_aur = (CheckAurFunc)dlsym(patcher_handle, "check_aur_availability");
+    auto install_aur_helper = (InstallAurHelperFunc)dlsym(patcher_handle, "install_aur_helper");
+
+    // Get function pointers for fresh_install
+    auto create_installer = (CreateInstallerFunc)dlsym(installer_handle, "create_installer");
+    auto destroy_installer = (DestroyInstallerFunc)dlsym(installer_handle, "destroy_installer");
+    auto run_installation = (RunInstallationFunc)dlsym(installer_handle, "run_installation");
+    auto get_installer_logs = (GetInstallerLogsFunc)dlsym(installer_handle, "get_installer_logs");
+    auto free_installer_logs = (FreeInstallerLogsFunc)dlsym(installer_handle, "free_installer_logs");
+
+    // Check if all functions were loaded successfully
+    if (!create_patcher || !destroy_patcher || !initialize_patcher || !get_patcher_logs || 
+        !free_patcher_logs || !update_mirrorlist || !check_aur || !install_aur_helper ||
+        !create_installer || !destroy_installer || !run_installation || !get_installer_logs || 
+        !free_installer_logs) {
+        data.logs.push_back("Error loading required functions");
+        dlclose(patcher_handle);
+        dlclose(installer_handle);
+        return;
+    }
+
+    // Create system patcher
+    SystemPatcher* patcher = create_patcher();
+
+    // Request sudo password
+    data.input_prompt = "Enter sudo password: ";
+    refresh();
+    std::string sudo_password;
+    std::getline(std::cin, sudo_password);
+
+    // Initialize patcher with sudo password
+    if (!initialize_patcher(patcher, sudo_password.c_str())) {
+        char* logs = get_patcher_logs(patcher);
+        data.logs.push_back(logs);
+        free_patcher_logs(logs);
+        destroy_patcher(patcher);
+        dlclose(patcher_handle);
+        dlclose(installer_handle);
+        return;
+    }
+
+    // Update mirrorlist
+    if (!update_mirrorlist(patcher)) {
+        char* logs = get_patcher_logs(patcher);
+        data.logs.push_back(logs);
+        free_patcher_logs(logs);
+        destroy_patcher(patcher);
+        dlclose(patcher_handle);
+        dlclose(installer_handle);
+        return;
+    }
+
+    // Check AUR and install helper if needed
+    if (!check_aur(patcher)) {
+        // Ask user which AUR helper to install
+        data.input_prompt = "Select AUR helper (yay/paru): ";
+        refresh();
+        std::string aur_helper;
+        std::getline(std::cin, aur_helper);
+        
+        if (aur_helper != "yay" && aur_helper != "paru") {
+            data.logs.push_back("Invalid AUR helper selected");
+            destroy_patcher(patcher);
+            dlclose(patcher_handle);
+            dlclose(installer_handle);
+            return;
+        }
+
+        if (!install_aur_helper(patcher, aur_helper.c_str())) {
+            char* logs = get_patcher_logs(patcher);
+            data.logs.push_back(logs);
+            free_patcher_logs(logs);
+            destroy_patcher(patcher);
+            dlclose(patcher_handle);
+            dlclose(installer_handle);
+            return;
+        }
+    }
+
+    // Create and run installer
+    SystemInstaller* installer = create_installer();
+    if (!run_installation(installer)) {
+        char* logs = get_installer_logs(installer);
+        data.logs.push_back(logs);
+        free_installer_logs(logs);
+        destroy_installer(installer);
+        destroy_patcher(patcher);
+        dlclose(patcher_handle);
+        dlclose(installer_handle);
+        return;
+    }
+
+    // Get final logs
+    char* logs = get_installer_logs(installer);
+    data.logs.push_back(logs);
+    free_installer_logs(logs);
+
+    // Cleanup
+    destroy_installer(installer);
+    destroy_patcher(patcher);
+    dlclose(patcher_handle);
+    dlclose(installer_handle);
+}
+
 std::pair<UserData, Alerts> main_menu(int max_y, int max_x, UserData& data) {
     // Get current username
     struct passwd *pw = getpwuid(getuid());
@@ -275,22 +424,17 @@ std::pair<UserData, Alerts> main_menu(int max_y, int max_x, UserData& data) {
             data.selected = (data.selected + 1) % data.options.size();
             break;
         case 10: { // ENTER
-            std::string script_name;
             switch (data.selected) {
-                case 0: 
-                    script_name = "fresh_install.sh";
-                    data.logs.push_back("Starting fresh installation...");
+                case 0: // Fresh Install
+                    handle_fresh_install(data);
                     break;
                 case 1: 
-                    script_name = "update.sh";
-                    data.logs.push_back("Starting system update...");
+                    execute_script("update", data);
                     break;
                 case 2: 
-                    script_name = "themepatcher.sh";
-                    data.logs.push_back("Starting theme patcher...");
+                    execute_script("themepatcher.sh", data);
                     break;
             }
-            execute_script(script_name, data);
             break;
         }
         case 'q':
@@ -312,7 +456,7 @@ int main() {
     UserData data{
         0,
         {"1) Fresh Install", "2) Update", "3) Theme Patcher", "4) Editor"},
-        "", "", "", {}, ""
+        "", "", "", {}, "", ""
     };
 
     while (true) {
