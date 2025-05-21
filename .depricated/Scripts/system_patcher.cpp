@@ -1,4 +1,5 @@
 #include "global.hpp"
+#include <sys/stat.h>
 
 namespace fs = std::filesystem;
 
@@ -9,8 +10,22 @@ private:
     std::string sudo_password;
 
     bool execute_sudo_command(const std::string& command, std::string& output) {
-        std::string full_command = "echo '" + sudo_password + "' | sudo -S " + command;
-        return execute_command(full_command, output);
+        // Create a temporary script to handle sudo
+        std::string script_path = "/tmp/sudo_script_" + std::to_string(getpid()) + ".sh";
+        std::ofstream script(script_path);
+        script << "#!/bin/bash\n";
+        script << "echo '" << sudo_password << "' | sudo -S " << command << "\n";
+        script.close();
+        
+        // Make the script executable
+        chmod(script_path.c_str(), 0700);
+        
+        // Execute the script with a timeout
+        bool result = execute_command(script_path, output, 60);
+        
+        // Clean up
+        unlink(script_path.c_str());
+        return result;
     }
 
 public:

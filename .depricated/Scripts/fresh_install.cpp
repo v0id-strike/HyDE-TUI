@@ -44,11 +44,11 @@ private:
         }
 
         std::string output;
-        if (execute_command("pacman -S --noconfirm " + package_list, output)) {
+        if (execute_command("pacman -S --noconfirm " + package_list, output, 600)) { // 10 minute timeout
             add_log("Successfully installed pacman packages");
             return true;
         }
-        add_log("Failed to install pacman packages");
+        add_log("Failed to install pacman packages: " + output);
         return false;
     }
 
@@ -70,8 +70,8 @@ private:
 
         for (const auto& pkg : aur_packages) {
             std::string output;
-            if (!execute_command(aur_helper + " -S --noconfirm " + pkg, output)) {
-                add_log("Failed to install AUR package: " + pkg);
+            if (!execute_command(aur_helper + " -S --noconfirm " + pkg, output, 300)) { // 5 minute timeout per package
+                add_log("Failed to install AUR package: " + pkg + "\nError: " + output);
                 return false;
             }
             add_log("Successfully installed AUR package: " + pkg);

@@ -35,10 +35,14 @@ bool check_root() {
     return geteuid() == 0;
 }
 
-// Function to execute command and capture output
-bool execute_command(const std::string& command, std::string& output) {
-    FILE* pipe = popen(command.c_str(), "r");
-    if (!pipe) return false;
+// Function to execute command and capture output with timeout
+bool execute_command(const std::string& command, std::string& output, int timeout_seconds = 300) {
+    std::string cmd = "timeout " + std::to_string(timeout_seconds) + " " + command + " 2>&1";
+    FILE* pipe = popen(cmd.c_str(), "r");
+    if (!pipe) {
+        output = "Failed to execute command: " + command;
+        return false;
+    }
     
     char buffer[128];
     while (fgets(buffer, sizeof(buffer), pipe) != NULL) {
@@ -46,6 +50,10 @@ bool execute_command(const std::string& command, std::string& output) {
     }
     
     int status = pclose(pipe);
+    if (status == 124) { // timeout exit code
+        output += "\nCommand timed out after " + std::to_string(timeout_seconds) + " seconds";
+        return false;
+    }
     return status == 0;
 }
 
