@@ -9,11 +9,7 @@
 #include <sys/ioctl.h>
 #include <asm-generic/ioctls.h>
 
-void
-    getTerminal_Size
-    ( int &rows , int &cols )
-{
-    
+void getTerminal_Size (int &rows, int&cols) {
     struct
         winsize
         window_Size

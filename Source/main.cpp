@@ -32,6 +32,10 @@ void draw_box(int top, int left, int bottom, int right) {
 }
 
 int main() {
+    // Get terminal size
+    int max_y, max_x;
+    // TODO: get terminal size
+    
     std::cout << "\033[2J"; // Clear screen
     draw_box(2, 5, 10, 40);
     std::cout << "\033[" << height + 1 << ";0H"; // Move cursor out of the way
