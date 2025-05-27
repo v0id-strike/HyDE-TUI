@@ -1,47 +1,65 @@
+# Compiler and Flags
 CXX = g++
-CXXFLAGS = -std=c++17 -Wall -Wextra -pedantic -fPIC
-LDFLAGS = -lncurses -ldl -ljsoncpp
+CXXFLAGS = -std=c++17 -Wall -Wextra -pedantic -fPIC -IInclude
+LDFLAGS = -LBuild/lib -Wl,-rpath,Build/lib
+LDLIBS = -lutils
 
-SCRIPT_DIR = Scripts
+# Project Structure
+SRC_DIR = Source
+INC_DIR = Include
 OBJ_DIR = Build/obj
 LIB_DIR = Build/lib
+BIN_DIR = Build/bin
 
-TARGET = hyde-tui
+# Targets
+TARGET = $(BIN_DIR)/hyde-tui
+LIB_NAME = utils
+LIB_SO = $(LIB_DIR)/lib$(LIB_NAME).so
 
-SRCS = HyDE_TUI.cpp
-OBJS = $(patsubst %.cpp,$(OBJ_DIR)/%.o,$(SRCS))
+# Sources and Objects
+MAIN_SRC = $(SRC_DIR)/main.cpp
+MAIN_OBJ = $(OBJ_DIR)/$(SRC_DIR)/main.o
 
-SCRIPT_SRCS = $(SCRIPT_DIR)/system_patcher.cpp $(SCRIPT_DIR)/fresh_install.cpp
-SCRIPT_OBJS = $(patsubst $(SCRIPT_DIR)/%.cpp,$(OBJ_DIR)/%.o,$(SCRIPT_SRCS))
-SCRIPT_SOS = $(patsubst $(SCRIPT_DIR)/%.cpp,$(LIB_DIR)/%.so,$(SCRIPT_SRCS))
+LIB_SRCS = $(SRC_DIR)/utils.cpp
+LIB_OBJS = $(OBJ_DIR)/$(SRC_DIR)/utils.o
 
+# Phony Targets
 .PHONY: all clean install uninstall
 
-all: $(TARGET) $(SCRIPT_SOS)
+# Default
+all: $(TARGET)
 
-$(TARGET): $(OBJS)
-	@mkdir -p $(dir $@)
-	$(CXX) $(OBJS) -o $@ $(LDFLAGS)
+# Main Binary
+$(TARGET): $(MAIN_OBJ) $(LIB_SO)
+	@mkdir -p $(BIN_DIR)
+	$(CXX) $(MAIN_OBJ) -o $@ $(LDFLAGS) $(LDLIBS)
 
-$(LIB_DIR)/%.so: $(OBJ_DIR)/%.o
+# Shared Library
+$(LIB_SO): $(LIB_OBJS)
 	@mkdir -p $(LIB_DIR)
-	$(CXX) -shared -o $@ $< $(LDFLAGS)
+	$(CXX) -shared -o $@ $^
 
+# Generic Compile Rule
 $(OBJ_DIR)/%.o: %.cpp
-	@mkdir -p $(OBJ_DIR)
+	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
-$(OBJ_DIR)/%.o: $(SCRIPT_DIR)/%.cpp
-	@mkdir -p $(OBJ_DIR)
-	$(CXX) $(CXXFLAGS) -c $< -o $@
+# Run executable
+run: 
+	$(TARGET)
 
+# Clean
 clean:
-	rm -rf $(OBJ_DIR) $(LIB_DIR) $(TARGET)
+	rm -rf Build
 
-install: $(TARGET) $(SCRIPT_SOS)
-	install -Dm755 $(TARGET) ~/.local/bin/$(TARGET)
-	install -Dm755 $(SCRIPT_SOS) ~/.local/lib/hyde-tui/
+# Install
+install: $(TARGET) $(LIB_SO)
+	install -Dm755 $(TARGET) ~/.local/bin/hyde-tui
+	install -Dm755 $(LIB_SO) ~/.local/lib/libutils.so
+	install -Dm644 $(INC_DIR)/utils.hpp ~/.local/include/utils.hpp
 
+# Uninstall
 uninstall:
-	rm -f ~/.local/bin/$(TARGET)
-	rm -f ~/.local/lib/hyde-tui/*.so
+	rm -f ~/.local/bin/hyde-tui
+	rm -f ~/.local/lib/libutils.so
+	rm -f ~/.local/include/utils.hpp
